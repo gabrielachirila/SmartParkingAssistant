@@ -35,12 +35,11 @@ typedef struct thData{
 static void *treat(void *); /* functia executata de fiecare thread ce realizeaza comunicarea cu clientii */
 void raspunde(void *);
 
-void register_user(sqlite3 *db, thData tdL);
-void login_user(sqlite3 *db, thData tdL);
+void register_user(thData tdL);
+void login_user(thData tdL);
+int Verific_daca_username_este_deja_folosit(char username[30]);
 
 sqlite3 *db;
-
-
 
 int main ()
 {
@@ -165,16 +164,16 @@ void raspunde(void *arg)
 
   if (option == 1) {
     printf("optiunea 1 \n");
-    register_user(db, tdL);
+    register_user(tdL);
   }
   else if (option == 2) {
     printf("optiunea 2 \n");
-    login_user(db, tdL);
+    login_user(tdL);
   }
 
 }
 
-void register_user(sqlite3 *db, thData tdL) {
+void register_user(thData tdL) {
   char username[30];
   char password[30];
 
@@ -186,36 +185,126 @@ void register_user(sqlite3 *db, thData tdL) {
     printf("[Thread %d] Error reading password from client. \n", tdL.idThread);
   }
 
-  printf("username primit: %s\n", username);
-  printf("parola primita: %s\n", password);
+  // printf("username primit: %s\n", username);
+  // printf("parola primita: %s\n", password);
 
-  char query[200];
-  snprintf(query, sizeof(query), "INSERT INTO users (username, password) VALUES ('%s', '%s');", username, password);
+    if ( username == NULL || password == NULL || username[0] == '\n' || password[0] == '\n' )
+        printf("Username-ul sau parola nu au fost bine definite. Completati username si/sau parola corespunzator!\n");
+    else
+    {
+    sqlite3 *db;
+    char *ErrMsg = 0;
+    int rc;
 
-  sqlite3_stmt *stmt;
-  int success = 0;
+    rc = sqlite3_open("proiect.db", &db);
 
-  if (sqlite3_prepare_v2(db, query, -1, &stmt, 0) == SQLITE_OK) {
-      sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
-      sqlite3_bind_text(stmt, 2, password, -1, SQLITE_STATIC);
+    if(rc) 
+    {
+      fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db));
+      exit(1);
+    }
+    else 
+      fprintf(stderr, "Opened database successfully\n");
 
-      if (sqlite3_step(stmt) == SQLITE_DONE) {
-          success = 1;
-      } else {
-          fprintf(stderr, "[Thread %d] SQL error: %s \n", tdL.idThread, sqlite3_errmsg(db));
-      }
+    int success = 0;
+    
+    if ( Verific_daca_username_este_deja_folosit(username) == 1) 
+    {
+       printf("Username-ul ales este deja folosit de alt utilizator. Incercati din nou! \n");
+    }
+    else if ( Verific_daca_username_este_deja_folosit(username) == 0 )
+    {
+        char insert[200] = "INSERT INTO users (username, password) VALUES ('";
+        strcat(insert, username);
+        strcat(insert, "\',\'");
+        strcat(insert, password);
+        strcat(insert, "');");
 
-      sqlite3_finalize(stmt);
-  } else {
-      fprintf(stderr, "[Thread %d] SQL error: %s \n", tdL.idThread, sqlite3_errmsg(db));
-  }
+        // printf("[server] insert from register: %s \n", insert);
+        fflush(stdout);
 
-  if (write(tdL.cl, &success, sizeof(int)) <= 0) {
-      perror("[Thread] Error writing to client.\n");
-  }
+        rc = sqlite3_exec(db, insert, 0, 0, &ErrMsg);
+
+        if( rc != SQLITE_OK )
+        {
+            fprintf(stderr, "[server]SQL error: %s\n", ErrMsg);
+            sqlite3_free(ErrMsg);
+            printf("Eroare baza de date. Incearcati din nou!\n");
+            sqlite3_close(db);
+        } 
+        else 
+        {
+            // fprintf(stdout, "[server]Records created successfully\n");
+            printf("Inregistrarea s-a realizat cu succes!\n");
+            sqlite3_exec(db, "COMMIT;", 0, 0, 0);
+            sqlite3_close(db);
+        }
+    }//else_verific = 0
+    else
+    {
+        printf("Eroare baza de date. Incearcati din nou!\n");
+    }
+    }
+
+    if (write(tdL.cl, "1", sizeof(int)) <= 0) {
+        perror("[Thread] Error writing to client.\n");
+    }
 }
 
-void login_user(sqlite3 *db, thData tdL) {
+int Verific_daca_username_este_deja_folosit(char username_exists[50])
+{
+    sqlite3 *db;
+    char *ErrMsg = 0;
+    sqlite3_stmt *res;
+    int rc;
+
+    rc = sqlite3_open("proiect.db", &db);
+
+    if( rc ) 
+    {
+      fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db));
+      exit(1);
+    }
+    else 
+      fprintf(stderr, "Opened database successfully\n");
+    
+
+    char select[200] = "SELECT id from users WHERE username=\'";
+    strcat(select, username_exists);
+    strcat(select, "\';");
+
+    // printf("%s\n", select);
+    fflush(stdout);
+
+    rc = sqlite3_prepare_v2(db, select, -1, &res, 0);
+
+    if( rc != SQLITE_OK )
+        {
+            return 2;
+            sqlite3_close(db);
+        } 
+    else
+    {
+        int step = sqlite3_step(res);
+
+        if (step == SQLITE_ROW)
+        {
+          //printf("Username-ul ales este deja folosit de altcineva. Incercati din nou!\n");
+          sqlite3_close(db);
+          return 1;
+        }
+        else 
+        {
+            //printf("Username-ul este ok!");
+            sqlite3_close(db);
+            return 0;
+        }
+    }
+
+}
+
+
+void login_user(thData tdL) {
   char username[30];
   char password[30];
 
@@ -227,23 +316,64 @@ void login_user(sqlite3 *db, thData tdL) {
     printf("[Thread %d] Error reading password from client. \n", tdL.idThread);
   }
 
-  char query[200];
-  snprintf(query, sizeof(query), "SELECT * FROM users WHERE username='%s' AND password='%s';", username, password);
+if ( username == NULL || password == NULL || username[0] == '\n' || password[0] == '\n' )
+        printf("Username-ul sau parola nu au fost bine definite.Completati username si parola corespunzator!\n");
+   else
+   {
+    sqlite3 *db;
+    char *ErrMsg = 0;
+    sqlite3_stmt *res;
+    int rc;
 
-  int success = 0;
-  char *error_message = 0;
+    rc = sqlite3_open("proiect.db", &db);
 
-  if(sqlite3_exec(db, query, 0, &success, &error_message) != SQLITE_OK) {
-    fprintf(stderr, "[Thread %d] SQL error: %s \n", tdL.idThread, error_message);
-    sqlite3_free(error_message);
-  }
-  else {
-    success = 1;
-  }
+    if( rc ) 
+    {
+      fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db));
+      exit(1);
+    }
+    else 
+      fprintf(stderr, "Opened database successfully\n");
+    
 
-  printf("success: %d\n",success);
+    char select[200] = "SELECT id from users WHERE username=\'";
+    strcat(select, username);
+    strcat(select, "\' and Password=\'");
+    strcat(select, password);
+    strcat(select, "\';");
 
-  if (write(tdL.cl, &success, sizeof(int)) <= 0) {
+    // printf("%s\n", select);
+    fflush(stdout);
+
+    rc = sqlite3_prepare_v2(db, select, -1, &res, 0);
+
+    if( rc != SQLITE_OK )
+        {
+            fprintf(stderr, "[server]SQL error: %s\n", ErrMsg);
+            sqlite3_free(ErrMsg);
+            printf("Eroare baza de date. Incearcati din nou!\n");
+            sqlite3_close(db);
+        } 
+    else
+    {
+        int step = sqlite3_step(res);
+
+        if (step == SQLITE_ROW)
+        {
+            // fprintf(stdout, "[server]Records updated successfully\n");
+            printf("Autentificarea s-a realizat cu succes!\n");
+            sqlite3_exec(db, "COMMIT;", 0, 0, 0);
+            sqlite3_close(db);
+        }
+        else 
+        {
+            printf("Username/parola gresita.Incercati din nou!\n");
+            sqlite3_close(db);
+        }
+    }
+   }
+
+  if (write(tdL.cl, "1", sizeof(int)) <= 0) {
       perror("[Thread] Error writing to client.\n");
   }
 }
