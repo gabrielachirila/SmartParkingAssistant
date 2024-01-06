@@ -89,7 +89,56 @@ void menu_after_login(int sd) {
       write(sd, &option1, sizeof(int));
 
       if (option1 == 1) {
-        printf("[client] View parking availability\n");
+          char message[200];
+          bzero(message, 200);
+
+          // Option 1: View parking availability
+          char city[50];
+          char area[100];
+
+          char cityList[500];
+          bzero(cityList, 500);
+          if (read(sd, cityList, sizeof(cityList)) <= 0) {
+              perror("[client] Error reading cities from server.\n");
+              return;
+          }
+
+          printf("[client] Choose a city from this list where you want to park: \n %s \n", cityList);
+
+          // Step 1: Choose a city
+          printf("Enter the city where you want to park: ");
+          scanf("%s", city);
+
+          // Send the selected city to the server
+          write(sd, city, sizeof(city));
+
+          char areaList[200];
+          bzero(areaList, 200);
+          if (read(sd, areaList, sizeof(areaList)) <= 0) {
+              perror("[client] Error reading areas from server.\n");
+              return;
+          }
+
+          printf("[client] Choose an area in city %s from this list where you want to park: \n %s \n", city, areaList);
+
+          // Step 2: Choose an area
+          printf("Enter the area in city %s where you want to park: ", city);
+          fflush (stdout);
+          read (0, area, sizeof(area));
+
+          size_t len = strlen(area);
+          if (len > 0 && area[len - 1] == '\n') {
+              area[len - 1] = '\0';
+          }
+
+          printf("area: %s \n", area);
+
+          // Send the selected area to the server
+          write(sd, area, sizeof(area));
+
+          // Step 3: Receive and display available parking spots
+          read(sd, &message, sizeof(message));
+          printf("[client] Mesajul primit este: %s\n", message);
       }
       else if (option1 == 2){
         printf("[client]  View parking history...\n");

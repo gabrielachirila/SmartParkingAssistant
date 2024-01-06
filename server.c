@@ -222,7 +222,7 @@ void raspunde(void *arg)
               if (option1 == 1)
               {
                 printf("[Thread %d] Optiunea %d: View parking availability \n",tdL.idThread, option1);
-                // viewParkingAvailability(tdl, db);
+                viewParkingAvailability(tdL, db);
               }
               else if (option1 == 2)
               {
@@ -708,5 +708,162 @@ char *populateAreasTableQuery = "INSERT INTO areas (area_name, city_id, total_sp
         fprintf(stderr, "aici ares SQL error: %s \n", error_message);
         sqlite3_free(error_message);
         return;
+    }
+}
+
+void viewParkingAvailability(thData tdL, sqlite3 *db) {
+    // Buffer to store the response message
+    char message[200];
+    bzero(message, 200);
+
+    // Step 1: Retrieve the list of cities from the cities table
+    char cityList[500];
+    bzero(cityList, 500);
+
+    // Example query: Replace this with your actual query to get the list of cities
+    const char *getCitiesQuery = "SELECT city_name FROM cities";
+    sqlite3_stmt *citiesStmt;
+
+    int rc = sqlite3_prepare_v2(db, getCitiesQuery, -1, &citiesStmt, 0);
+    if (rc != SQLITE_OK) {
+        sprintf(message, "Error preparing SQL statement.\n");
+        return;
+    }
+
+    // Concatenate the city names into a single string
+    while (sqlite3_step(citiesStmt) == SQLITE_ROW) {
+        strcat(cityList, sqlite3_column_text(citiesStmt, 0));
+        strcat(cityList, ",");
+    }
+
+    // Finalize the statement
+    sqlite3_finalize(citiesStmt);
+
+    // Send the list of cities to the client
+    if (write(tdL.cl, cityList, sizeof(cityList)) <= 0) {
+        printf("[Thread %d] ", tdL.idThread);
+        perror("[Thread] Error writing to client.\n");
+        return;
+    }
+
+    // Step 2: Receive the selected city from the client
+    char selectedCity[50];
+    bzero(selectedCity, 50);
+    if (read(tdL.cl, selectedCity, sizeof(selectedCity)) <= 0) {
+        perror("[Thread] Error reading selected city from client.\n");
+        return;
+    }
+
+    // Step 3: Retrieve the city ID based on the selected city
+    int cityID = -1;
+    char getCityIDQuery[100];
+    sprintf(getCityIDQuery, "SELECT city_id FROM cities WHERE city_name='%s'", selectedCity);
+
+    sqlite3_stmt *cityIDStmt;
+    rc = sqlite3_prepare_v2(db, getCityIDQuery, -1, &cityIDStmt, 0);
+    if (rc == SQLITE_OK && sqlite3_step(cityIDStmt) == SQLITE_ROW) {
+        cityID = sqlite3_column_int(cityIDStmt, 0);
+    }
+
+
+    // Finalize the statement
+    sqlite3_finalize(cityIDStmt);
+
+    // Check if a valid city ID was obtained
+    if (cityID == -1) {
+        sprintf(message, "Invalid city selection.\n");
+        write(tdL.cl, message, sizeof(message));
+        return;
+    }
+
+    // Step 4: Query the areas table to get the list of areas in the selected city
+    char areaList[200];
+    bzero(areaList, 200);
+
+    // Example query: Replace this with your actual query to get the list of areas in the selected city
+    char getAreasQuery[100];
+    sprintf(getAreasQuery, "SELECT area_name FROM areas WHERE city_id=%d", cityID);
+
+    sqlite3_stmt *areasStmt;
+    rc = sqlite3_prepare_v2(db, getAreasQuery, -1, &areasStmt, 0);
+    if (rc != SQLITE_OK) {
+        sprintf(message, "Error preparing SQL statement.\n");
+        return;
+    }
+    
+
+    // Concatenate the area names into a single string
+    while (sqlite3_step(areasStmt) == SQLITE_ROW) {
+        strcat(areaList, sqlite3_column_text(areasStmt, 0));
+        strcat(areaList, ",");
+    }
+
+    // Finalize the statement
+    sqlite3_finalize(areasStmt);
+
+    // Send the list of areas to the client
+    if (write(tdL.cl, areaList, sizeof(areaList)) <= 0) {
+        printf("[Thread %d] ", tdL.idThread);
+        perror("[Thread] Error writing to client.\n");
+        return;
+    }
+
+    // Step 5: Receive the selected area from the client
+    char selectedArea[100];
+    bzero(selectedArea, 100);
+    if (read(tdL.cl, selectedArea, sizeof(selectedArea)) <= 0) {
+        perror("[Thread] Error reading selected area from client.\n");
+        return;
+    }
+
+    printf("Selected area: %s \n", selectedArea );
+
+    // Step 6: Query the areas table to get the total_spots for the selected area
+    int totalSpots = -1;
+    char getTotalSpotsQuery[300] = "SELECT total_spots FROM areas WHERE city_id=";
+
+    // Convert cityID to string before concatenating
+    char cityIDStr[20];
+    sprintf(cityIDStr, "%d", cityID);
+
+    strcat(getTotalSpotsQuery, cityIDStr);
+    strcat(getTotalSpotsQuery, " AND area_name='");
+    strcat(getTotalSpotsQuery, selectedArea);
+    strcat(getTotalSpotsQuery, "';");
+
+    printf("query: %s \n", getTotalSpotsQuery);
+
+    sqlite3_stmt *totalSpotsStmt;
+    rc = sqlite3_prepare_v2(db, getTotalSpotsQuery, -1, &totalSpotsStmt, 0);
+    if (rc == SQLITE_OK && sqlite3_step(totalSpotsStmt) == SQLITE_ROW) {
+        totalSpots = sqlite3_column_int(totalSpotsStmt, 0);
+        printf("Total spots: %d \n", totalSpots);
+    }
+
+    // Finalize the statement
+    sqlite3_finalize(totalSpotsStmt);
+
+    // Check if a valid total_spots value was obtained
+    if (totalSpots == -1) {
+        sprintf(message, "Invalid area selection.\n");
+        write(tdL.cl, message, sizeof(message));
+        return;
+    }
+
+
+
+    // Step 7: Generate the available spots randomly and send the information to the client
+    srand(time(NULL));
+    int availableSpots = rand() % (totalSpots + 1);
+    printf("available spots: %d \n", availableSpots);
+    
+    sprintf(message, "Available parking spots in %s, %s: %d", selectedCity, selectedArea, availableSpots);
+
+    // Send the response to the client
+    if (write(tdL.cl, message, sizeof(message)) <= 0) {
+        printf("[Thread %d] ", tdL.idThread);
+        perror("[Thread] Error writing to client.\n");
+    } else {
+        printf("[Thread %d] Message successfully transmitted.\n", tdL.idThread);
     }
 }
