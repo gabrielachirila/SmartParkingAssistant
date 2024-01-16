@@ -17,6 +17,8 @@
 #include "response.h"
 #include "constants.h"
 
+sqlite3 *open_database_connection();
+void close_database_connection(sqlite3 *db);
 void createTables(sqlite3 *db);
 
 #endif 

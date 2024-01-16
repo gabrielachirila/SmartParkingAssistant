@@ -25,11 +25,10 @@ void menu_after_login(int sd) {
 
   while(1) {
     printf("---------------------------------------------------------\n");
-    printf("Choose an option (Please enter a number between 1 and 4):\n");
+    printf("Choose an option (Please enter a number between 1 and 3):\n");
     printf("1. View parking availability\n");
     printf("2. View parking history\n");
-    printf("3. Find nearest parking spot\n");
-    printf("4. Logout\n");
+    printf("3. Logout\n");
 
     scanf("%d", &option);
 
@@ -42,11 +41,7 @@ void menu_after_login(int sd) {
       view_parking_history(sd);
 
     }
-    else if (option == 3)
-    {
-      printf("Find nearest parking spot...\n");
-    }
-    else if (option == 4) 
+    else if (option == 3) 
     {
       printf("Logout...\n");
       break;

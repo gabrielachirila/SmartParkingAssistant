@@ -24,29 +24,6 @@ extern int errno;
 static void *treat(void *); /* functia executata de fiecare thread ce realizeaza comunicarea cu clientii */
 void raspunde(void *);
 
-void createTables(sqlite3 *db);
-
-
-sqlite3 *open_database_connection() {
-  sqlite3 *db;
-  int rc;
-
-  rc = sqlite3_open("proiect-RC.db", &db);
-
-  if (rc) {
-    fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db));
-    exit(1);
-  } else {
-    fprintf(stderr, "Opened database successfully\n");
-  }
-
-  return db;
-}
-
-void close_database_connection(sqlite3 *db) {
-  sqlite3_close(db);
-}
-
 int main ()
 {
   struct sockaddr_in server;
@@ -57,11 +34,10 @@ int main ()
 	int i=0;
   char *error_message = 0;
 
-  sqlite3 *db = open_database_connection();
   srand(time(NULL));
 
+  sqlite3 *db = open_database_connection();
   createTables(db);
-
   close_database_connection(db);
 
   if ((sd = socket (AF_INET, SOCK_STREAM, 0)) == -1)
@@ -70,13 +46,11 @@ int main ()
       return errno;
     }
 
-
   int on=1;
   setsockopt(sd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on));
 
   bzero (&server, sizeof (server));
   bzero (&from, sizeof (from));
-  
 
   server.sin_family = AF_INET;	
   server.sin_addr.s_addr = htonl (INADDR_ANY);
@@ -137,7 +111,6 @@ void raspunde(void *arg)
   int option, i=0;
   thData tdL = *((thData*)arg);
 
-  sqlite3 *db = open_database_connection();
   char msgrasp[MAX_MESSAGE_LENGTH]=" ";
 
   while(1) {
@@ -153,11 +126,11 @@ void raspunde(void *arg)
 
     if (option == 1) {
       printf("Optiunea 1 \n");
-      register_user(tdL, db);
+      register_user(tdL);
     } 
     else if (option == 2) {
       printf("Optiunea 2 \n");
-      int ok = login_user(&tdL, db);
+      int ok = login_user(&tdL);
 
       if (ok == 1) {
         int option1;
@@ -174,18 +147,14 @@ void raspunde(void *arg)
           if (option1 == 1)
           {
             printf("[Thread %d] Optiunea %d: View parking availability \n",tdL.idThread, option1);
-            viewParkingAvailability(tdL, db);
+            viewParkingAvailability(tdL);
           }
           else if (option1 == 2)
           {
             printf("[Thread %d] Optiunea %d: View parking history \n",tdL.idThread, option1);
-            viewParkingHistory(tdL, db);
+            viewParkingHistory(tdL);
           }
-          else if (option1 == 3)
-          {
-            printf("[Thread %d] Optiunea %d: Find nearest parking spot \n",tdL.idThread, option1);  
-          }
-          else if(option1 == 4)
+          else if(option1 == 3)
           {
             printf("[Thread %d] Optiunea %d: Logout \n",tdL.idThread, option1);
             break;
@@ -242,9 +211,6 @@ void raspunde(void *arg)
           printf ("[Thread %d]Mesajul a fost trasmis cu succes.\n",tdL.idThread);	
     }
   }
-    
-  close_database_connection(db);
-
 }
 
 

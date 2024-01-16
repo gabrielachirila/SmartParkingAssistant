@@ -101,9 +101,7 @@ void view_parking_availability(int sd){
 
         if (response.success) {
             validCity = 1;
-        } else {
-            printf("Error: %s\n", response.message);
-        }
+        } 
 
         printf("%s \n",response.message);
     }
@@ -152,7 +150,7 @@ void view_parking_availability(int sd){
         return;
         }
 
-    printf("aici %s\n", response.message);
+    printf("%s\n", response.message);
 
     if (strcmp(response.message, "There are no available parking spots!") != 0)
     {

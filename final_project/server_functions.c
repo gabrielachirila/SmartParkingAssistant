@@ -13,6 +13,7 @@
 #include <time.h>
 
 #include "server_functions.h" 
+#include "database_functions.h"
 #include "response.h"
 #include "constants.h"
 #include "thread_data.h"
@@ -36,7 +37,7 @@ int get_user_id_from_database(char username[MAX_USERNAME_LENGTH], sqlite3 *db) {
     return userId;
 }
 
-void register_user(thData tdL, sqlite3 *db) {
+void register_user(thData tdL) {
   char username[MAX_USERNAME_LENGTH];
   char password[MAX_PASSWORD_LENGTH];
 
@@ -57,17 +58,23 @@ void register_user(thData tdL, sqlite3 *db) {
   // printf("username primit: %s\n", username);
   // printf("parola primita: %s\n", password);
 
+  sqlite3 *db = open_database_connection();
+
+  if (sqlite3_exec(db, "BEGIN;", 0, 0, 0) != SQLITE_OK) {
+    fprintf(stderr, "[server]SQL error: %s\n", sqlite3_errmsg(db));
+  }
+
   if (username == NULL || password == NULL || username[0] == '\n' || password[0] == '\n') {
-    printf("Username-ul sau parola nu au fost bine definite. Completati username si/sau parola corespunzator!\n");
-    snprintf(response.message, sizeof(response.message), "Username-ul sau parola nu au fost bine definite. Completati username si/sau parola corespunzator!");
+    printf("Complete with valid username and/or password!\n");
+    snprintf(response.message, sizeof(response.message), "Complete with valid username and/or password!\n");
   } 
   else {
     char *ErrMsg = 0;
     int rc;
 
     if (verify_username(username, db) == 0) {
-      printf("Username-ul ales este deja folosit de alt utilizator. Incercati din nou! \n");
-      snprintf(response.message, sizeof(response.message), "Username-ul %s este deja folosit de alt utilizator. Incercati altul!", username);
+      printf("Username already used... Try again! \n");
+      snprintf(response.message, sizeof(response.message), "Username: %s already used... Try again! \n", username);
     } 
     else if (verify_username(username, db) == 1) {
       char *insert_query = "INSERT INTO users (username, password) VALUES (?, ?)";
@@ -77,45 +84,52 @@ void register_user(thData tdL, sqlite3 *db) {
 
       if (rc != SQLITE_OK) {
         fprintf(stderr, "[server]SQL error: %s\n", sqlite3_errmsg(db));
-        snprintf(response.message, sizeof(response.message), "Eroare baza de date. Incearcati din nou!");
+        snprintf(response.message, sizeof(response.message), "Db error. Try again!\n");
       } 
       else {
         rc = sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
         if (rc != SQLITE_OK) {
           fprintf(stderr, "[server]SQL error: %s\n", sqlite3_errmsg(db));
           sqlite3_finalize(stmt);
-          snprintf(response.message, sizeof(response.message), "Eroare la bind_text. Incearcati din nou!");
+          snprintf(response.message, sizeof(response.message), "Try again!\n");
         } 
         else {
           rc = sqlite3_bind_text(stmt, 2, password, -1, SQLITE_STATIC);
           if (rc != SQLITE_OK) {
             fprintf(stderr, "[server]SQL error: %s\n", sqlite3_errmsg(db));
             sqlite3_finalize(stmt);
-            snprintf(response.message, sizeof(response.message), "Eroare la bind_text. Incearcati din nou!");
+            snprintf(response.message, sizeof(response.message), "Try again!\n");
           } 
           else {
             rc = sqlite3_step(stmt);
 
             if (rc != SQLITE_DONE) {
               fprintf(stderr, "[server]SQL error: %s\n", sqlite3_errmsg(db));
+              sqlite3_exec(db, "ROLLBACK;", 0, 0, 0);  
               sqlite3_finalize(stmt);
-              snprintf(response.message, sizeof(response.message), "Eroare la inserarea in baza de date. Incearcati din nou!");
+              snprintf(response.message, sizeof(response.message), "Try again!\n");
             } 
             else {
+              const char *finalSql = sqlite3_sql(stmt);
+              printf("Final SQL: %s\n", finalSql);
               sqlite3_finalize(stmt);
               sqlite3_exec(db, "COMMIT;", 0, 0, 0);
               response.success = 1;
-              snprintf(response.message, sizeof(response.message), "Inregistrarea s-a realizat cu succes!");
+              snprintf(response.message, sizeof(response.message), "Registration successful!\n");
             }
           }
         }
-      }
+       }
     } 
     else {
-      printf("Eroare baza de date. Incearcati din nou!\n");
-      snprintf(response.message, sizeof(response.message), "Eroare baza de date. Incearcati din nou!");
+      printf("Db error. Try again!\n");
+      sqlite3_exec(db, "ROLLBACK;", 0, 0, 0);
+      snprintf(response.message, sizeof(response.message), "Db error. Try again!\n");
     }
   }
+  
+  printf("close connection \n");
+  close_database_connection(db);
 
   if (write(tdL.cl, &response, sizeof(Response)) <= 0) {
     perror("[Thread] Error writing to client.\n");
@@ -126,44 +140,44 @@ void register_user(thData tdL, sqlite3 *db) {
   }
 }
 
-int verify_username(char username_exists[MAX_USERNAME_LENGTH], sqlite3 *db)
-{
-    char *ErrMsg = 0;
-    sqlite3_stmt *res;
+int verify_username(char username_exists[MAX_USERNAME_LENGTH], sqlite3 *db) {
+    sqlite3_stmt *stmt;
     int rc;
-    
-    char select[200] = "SELECT id from users WHERE username=\'";
-    strcat(select, username_exists);
-    strcat(select, "\';");
 
-    fflush(stdout);
+    const char *select_query = "SELECT id FROM users WHERE username = ?";
+    rc = sqlite3_prepare_v2(db, select_query, -1, &stmt, 0);
 
-    rc = sqlite3_prepare_v2(db, select, -1, &res, 0);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "[server]SQL error: %s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return 2; 
+    }
 
-    if( rc != SQLITE_OK )
-        {
-            return 2; // eroare la selecT
-        } 
-    else
-    {
-        int step = sqlite3_step(res);
+    rc = sqlite3_bind_text(stmt, 1, username_exists, -1, SQLITE_STATIC);
 
-        if (step == SQLITE_ROW)
-        {
-          return 0; // am gasit un utilizator cu acest username
-        }
-        else 
-        {
-          return 1; // nu s-a gasit niciun utilizator cu acest username
-        }
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "[server]SQL error: %s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return 2;
+    }
+
+    int step = sqlite3_step(stmt);
+
+    if (step == SQLITE_ROW) {
+        sqlite3_finalize(stmt);
+        return 0; // User with this username exists
+    } else {
+        sqlite3_finalize(stmt);
+        return 1; // No user with this username
     }
 }
 
-int login_user(thData *tdL, sqlite3 *db) {
+
+int login_user(thData *tdL) {
     int ok = 0;
+
     char username[MAX_USERNAME_LENGTH];
     char password[MAX_PASSWORD_LENGTH];
-
     bzero(username, MAX_USERNAME_LENGTH);
     bzero(password, MAX_PASSWORD_LENGTH);
 
@@ -178,44 +192,40 @@ int login_user(thData *tdL, sqlite3 *db) {
     Response response;
     response.success = 0; 
 
-    // printf("username primit: %s\n", username);
-    // printf("parola primita: %s\n", password);
+    sqlite3 *db = open_database_connection();
 
-    if (username == NULL || password == NULL || username[0] == '\n' || password[0] == '\n') {
-        printf("Username-ul sau parola nu au fost bine definite. Completati username si/sau parola corespunzator!\n");
-        snprintf(response.message, sizeof(response.message), "Username-ul sau parola nu au fost bine definite. Completati username si/sau parola corespunzator!");
+    if (username[0] == '\0' || password[0] == '\0') {
+        printf("Complete with valid username and/or password!\n");
+        snprintf(response.message, sizeof(response.message), "Complete with valid username and/or password!\n");
     } else {
-        char *ErrMsg = 0;
+        char select[200] = "SELECT id FROM users WHERE username=? AND password=?;";
         sqlite3_stmt *res;
-        int rc;
-
-        char select[200] = "SELECT id from users WHERE username=\'";
-        strcat(select, username);
-        strcat(select, "\' and Password=\'");
-        strcat(select, password);
-        strcat(select, "\';");
-
-        rc = sqlite3_prepare_v2(db, select, -1, &res, 0);
+        int rc = sqlite3_prepare_v2(db, select, -1, &res, 0);
 
         if (rc != SQLITE_OK) {
-            fprintf(stderr, "[server]SQL error: %s\n", sqlite3_errmsg(db));
-            snprintf(response.message, sizeof(response.message), "Eroare baza de date. Incearcati din nou!");
-        } 
-        else {
+            fprintf(stderr, "[server] SQL error: %s\n", sqlite3_errmsg(db));
+            snprintf(response.message, sizeof(response.message), "Db error... Try again!\n");
+        } else {
+            sqlite3_bind_text(res, 1, username, -1, SQLITE_STATIC);
+            sqlite3_bind_text(res, 2, password, -1, SQLITE_STATIC);
+
             int step = sqlite3_step(res);
 
             if (step == SQLITE_ROW) {
                 response.success = 1;
                 tdL->userId = get_user_id_from_database(username, db);
                 printf("tdL.userId = %d \n", tdL->userId);
-                snprintf(response.message, sizeof(response.message), "Autentificarea s-a realizat cu succes!");
+                snprintf(response.message, sizeof(response.message), "Authentication successful!\n");
                 ok = 1;
-            } 
-            else {
-                snprintf(response.message, sizeof(response.message), "Username/parola gresita. Incercati din nou!");
+            } else {
+                snprintf(response.message, sizeof(response.message), "Username or password incorrect... Try again!\n");
             }
+            
+            sqlite3_finalize(res);
         }
     }
+
+    close_database_connection(db);
 
     if (write(tdL->cl, &response, sizeof(Response)) <= 0) {
         perror("[Thread] Error writing to client.\n");
@@ -225,11 +235,9 @@ int login_user(thData *tdL, sqlite3 *db) {
         printf("%s\n", response.message);
     }
 
-    if (ok == 1)
-      return 1;
-    else
-      return 0;
+    return ok;
 }
+
 
 int isNumeric(const char *str) {
     char *endptr;
@@ -239,7 +247,7 @@ int isNumeric(const char *str) {
     return (*endptr == '\0');
 }
 
-void viewParkingAvailability(thData tdL, sqlite3 *db) {
+void viewParkingAvailability(thData tdL) {
     Response response;
     char message[MAX_MESSAGE_LENGTH];
     bzero(message, MAX_MESSAGE_LENGTH);
@@ -247,32 +255,39 @@ void viewParkingAvailability(thData tdL, sqlite3 *db) {
     char cityList[MAX_CITY_LIST_LENGTH];
     bzero(cityList, MAX_CITY_LIST_LENGTH);
 
+    sqlite3 *db;
+    db = open_database_connection();
+
+    sqlite3_exec(db, "BEGIN TRANSACTION", 0, 0, 0); 
+
     const char *getCitiesQuery = "SELECT city_name FROM cities";
     sqlite3_stmt *citiesStmt;
 
     int rc = sqlite3_prepare_v2(db, getCitiesQuery, -1, &citiesStmt, 0);
     if (rc != SQLITE_OK) {
-      sprintf(message, "Error preparing SQL statement.\n");
-      return;
+    sprintf(message, "Error preparing SQL statement.\n");
+    return;
     }
 
     int id = 1;
 
     while (sqlite3_step(citiesStmt) == SQLITE_ROW) {
-      char idStr[20]; 
-      sprintf(idStr, "%d", id); 
+    char idStr[20];
+    sprintf(idStr, "%d", id);
 
-      strcat(cityList, idStr);
-      strcat(cityList, ". ");
-      strcat(cityList, (const char *)sqlite3_column_text(citiesStmt, 0));
-      strcat(cityList, "\n");
+    strcat(cityList, idStr);
+    strcat(cityList, ". ");
+    strcat(cityList, (const char *)sqlite3_column_text(citiesStmt, 0));
+    strcat(cityList, "\n");
 
-      id++;
+    id++;
     }
 
-    // printf("cityList = \n %s \n", cityList);
-
     sqlite3_finalize(citiesStmt);
+
+    sqlite3_exec(db, "COMMIT", 0, 0, 0);  
+    close_database_connection(db);
+
 
     // send a list of cities to client so that he can choose one to park
     if (write(tdL.cl, cityList, sizeof(cityList)) <= 0) {
@@ -319,13 +334,22 @@ void viewParkingAvailability(thData tdL, sqlite3 *db) {
 
             bzero(cityName, MAX_CITY_LENGTH);
 
+            db = open_database_connection();
             sqlite3_stmt *cityNameStmt;
+
+            sqlite3_exec(db, "BEGIN TRANSACTION", 0, 0, 0);  
+
             rc = sqlite3_prepare_v2(db, getCityNameQuery, -1, &cityNameStmt, 0);
             if (rc == SQLITE_OK && sqlite3_step(cityNameStmt) == SQLITE_ROW) {
                 strncpy(cityName, (const char *)sqlite3_column_text(cityNameStmt, 0), MAX_CITY_LENGTH - 1);
             }
 
             sqlite3_finalize(cityNameStmt);
+
+            sqlite3_exec(db, "COMMIT", 0, 0, 0);  
+            close_database_connection(db);
+
+
             printf("cityName = %s \n", cityName);
 
             if (strlen(cityName) > 0) {
@@ -356,21 +380,26 @@ void viewParkingAvailability(thData tdL, sqlite3 *db) {
     char areaList[MAX_AREA_LIST_LENGTH];
     bzero(areaList, MAX_AREA_LIST_LENGTH);
 
+
     char getAreasQuery[100];
     sprintf(getAreasQuery, "SELECT area_name FROM areas WHERE city_id=%d", cityID);
 
+    db = open_database_connection();
     sqlite3_stmt *areasStmt;
+
+    sqlite3_exec(db, "BEGIN TRANSACTION", 0, 0, 0);  
+
     rc = sqlite3_prepare_v2(db, getAreasQuery, -1, &areasStmt, 0);
     if (rc != SQLITE_OK) {
         sprintf(message, "Error preparing SQL statement.\n");
         return;
     }
-    
+
     int id_area = 1;
 
     while (sqlite3_step(areasStmt) == SQLITE_ROW) {
-        char idStr[20]; 
-        sprintf(idStr, "%d", id_area); 
+        char idStr[20];
+        sprintf(idStr, "%d", id_area);
 
         strcat(areaList, idStr);
         strcat(areaList, ". ");
@@ -381,6 +410,10 @@ void viewParkingAvailability(thData tdL, sqlite3 *db) {
     }
 
     sqlite3_finalize(areasStmt);
+
+    sqlite3_exec(db, "COMMIT", 0, 0, 0);  
+    close_database_connection(db);
+
 
     // send a list of areas from the city selected to client so that he can choose one to park
     if (write(tdL.cl, areaList, sizeof(areaList)) <= 0) {
@@ -408,14 +441,22 @@ void viewParkingAvailability(thData tdL, sqlite3 *db) {
         snprintf(getNumberOfAreasQuery, sizeof(getNumberOfAreasQuery),
                 "SELECT COUNT(area_id) FROM areas WHERE city_id=%d;", cityID);
 
+        db = open_database_connection();
         int numberOfAreas = -1;
         sqlite3_stmt *areasCountStmt;
+
+        sqlite3_exec(db, "BEGIN TRANSACTION", 0, 0, 0);  
+
         rc = sqlite3_prepare_v2(db, getNumberOfAreasQuery, -1, &areasCountStmt, 0);
         if (rc == SQLITE_OK && sqlite3_step(areasCountStmt) == SQLITE_ROW) {
             numberOfAreas = sqlite3_column_int(areasCountStmt, 0);
         }
 
         sqlite3_finalize(areasCountStmt);
+
+        sqlite3_exec(db, "COMMIT", 0, 0, 0); 
+        close_database_connection(db);
+
 
         if (!isNumeric(selectedArea) || atoi(selectedArea) > numberOfAreas || atoi(selectedArea) < 1) {
             response.success = 0;    
@@ -432,6 +473,12 @@ void viewParkingAvailability(thData tdL, sqlite3 *db) {
             area_number = atoi(selectedArea);
 
             printf("cityID = %d \n", cityID);
+            
+
+            db = open_database_connection();
+            sqlite3_stmt *areaInfoStmt;
+
+            sqlite3_exec(db, "BEGIN TRANSACTION", 0, 0, 0);  
 
             char getAreaInfoQuery[300];
             snprintf(getAreaInfoQuery, sizeof(getAreaInfoQuery),
@@ -440,9 +487,6 @@ void viewParkingAvailability(thData tdL, sqlite3 *db) {
 
             printf("query: %s \n", getAreaInfoQuery);
 
-            sqlite3_stmt *areaInfoStmt;
-            bzero(areaName, MAX_AREA_LENGTH);
-
             rc = sqlite3_prepare_v2(db, getAreaInfoQuery, -1, &areaInfoStmt, 0);
             if (rc == SQLITE_OK && sqlite3_step(areaInfoStmt) == SQLITE_ROW) {
                 strncpy(areaName, (const char *)sqlite3_column_text(areaInfoStmt, 0), MAX_AREA_LENGTH - 1);
@@ -450,6 +494,10 @@ void viewParkingAvailability(thData tdL, sqlite3 *db) {
             }
 
             sqlite3_finalize(areaInfoStmt);
+
+            sqlite3_exec(db, "COMMIT", 0, 0, 0); 
+            close_database_connection(db);
+
 
             if (strlen(areaName) > 0) {
                 // Send the city name to the client
@@ -483,8 +531,10 @@ void viewParkingAvailability(thData tdL, sqlite3 *db) {
         cityID, area_number - 1);
 
     printf("query: %s \n", getTotalSpotsQuery);
-
+    db = open_database_connection();
     sqlite3_stmt *totalSpotsStmt;
+    sqlite3_exec(db, "BEGIN TRANSACTION", 0, 0, 0);  
+
     rc = sqlite3_prepare_v2(db, getTotalSpotsQuery, -1, &totalSpotsStmt, 0);
     if (rc == SQLITE_OK && sqlite3_step(totalSpotsStmt) == SQLITE_ROW) {
         totalSpots = sqlite3_column_int(totalSpotsStmt, 0);
@@ -492,6 +542,9 @@ void viewParkingAvailability(thData tdL, sqlite3 *db) {
     }
 
     sqlite3_finalize(totalSpotsStmt);
+
+    sqlite3_exec(db, "COMMIT", 0, 0, 0); 
+    close_database_connection(db);
 
     int availableSpots = rand() % (totalSpots + 1);
     printf("available spots: %d \n", availableSpots);
@@ -536,7 +589,7 @@ void viewParkingAvailability(thData tdL, sqlite3 *db) {
                 response.success = 1;
 
                 if (strcmp(parking, "y") == 0 || strcmp(parking, "Y") == 0) {
-                    int ok = bookParkingSpace(tdL, db, areaName, cityName);
+                    int ok = bookParkingSpace(tdL, areaName, cityName);
 
                     if(ok == 1) {
                         bzero(response.message, MAX_MESSAGE_LENGTH);
@@ -571,6 +624,7 @@ void viewParkingAvailability(thData tdL, sqlite3 *db) {
             }
         }
     }
+
 }
 
 void getCurrentDateTime(char *dateTime) {
@@ -583,54 +637,59 @@ void getCurrentDateTime(char *dateTime) {
     strftime(dateTime, MAX_DATE_TIME_LENGTH, "%Y-%m-%d %H:%M:%S", tm_info);
 }
 
-int bookParkingSpace(thData tdL, sqlite3 *db, char areaName[MAX_AREA_LENGTH], char cityName[MAX_CITY_LENGTH]) {
-    char reservation_date[MAX_DATE_TIME_LENGTH];
-    bzero(reservation_date, MAX_DATE_TIME_LENGTH);
-
-    getCurrentDateTime(reservation_date);
-
-    char *insertReservationQuery = "INSERT INTO reservations (user_id, city_name, area_name, reservation_date) VALUES (?, ?, ?, ?)";
+int bookParkingSpace(thData tdL, char areaName[MAX_AREA_LENGTH], char cityName[MAX_CITY_LENGTH]) {
+    sqlite3 *db;
+    close_database_connection(db);
+    db = open_database_connection();
     sqlite3_stmt *stmt;
-    int rc;
 
-    rc = sqlite3_prepare_v2(db, insertReservationQuery, -1, &stmt, 0);
+    sqlite3_exec(db, "BEGIN TRANSACTION", 0, 0, 0);
 
+    const char *insertReservationQuery =
+        "INSERT INTO reservations (user_id, city_name, area_name, reservation_date) VALUES (?, ?, ?, ?);";
+
+    int rc = sqlite3_prepare_v2(db, insertReservationQuery, -1, &stmt, 0);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "[server] SQL error: %s\n", sqlite3_errmsg(db));
+        fprintf(stderr, "Error preparing SQL statement: %s\n", sqlite3_errmsg(db));
+        sqlite3_exec(db, "ROLLBACK", 0, 0, 0);
         return 0;
     }
 
-    printf("userId = %d \n", tdL.userId);
+    sqlite3_bind_int(stmt, 1, tdL.userId);
+    sqlite3_bind_text(stmt, 2, cityName, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, areaName, -1, SQLITE_STATIC);
 
-    rc = sqlite3_bind_int(stmt, 1, tdL.userId); 
-    rc |= sqlite3_bind_text(stmt, 2, cityName, -1, SQLITE_STATIC);
-    rc |= sqlite3_bind_text(stmt, 3, areaName, -1, SQLITE_STATIC);
-    rc |= sqlite3_bind_text(stmt, 4, reservation_date, -1, SQLITE_STATIC);
-
-    if (rc != SQLITE_OK) {
-        fprintf(stderr, "[server] SQL error: %s\n", sqlite3_errmsg(db));
-
-        sqlite3_finalize(stmt);
-        return 0;
-    }
+    char reservationDate[MAX_DATE_TIME_LENGTH];
+    getCurrentDateTime(reservationDate);
+    sqlite3_bind_text(stmt, 4, reservationDate, -1, SQLITE_STATIC);
 
     rc = sqlite3_step(stmt);
-
     if (rc != SQLITE_DONE) {
-        fprintf(stderr, "[server] SQL error: %s\n", sqlite3_errmsg(db));
+        fprintf(stderr, "Error executing SQL statement: %s\n", sqlite3_errmsg(db));
+        sqlite3_exec(db, "ROLLBACK", 0, 0, 0);
+        sqlite3_finalize(stmt);
+        close_database_connection(db);
         return 0;
-    } 
-    else
-        return 1;
+    }
+
+    sqlite3_int64 lastRowId = sqlite3_last_insert_rowid(db);
+    printf("Last row id: %lld\n", lastRowId);
 
     sqlite3_finalize(stmt);
+
+    sqlite3_exec(db, "COMMIT", 0, 0, 0);
+    close_database_connection(db);
+
+    return 1;
 }
 
-void viewParkingHistory(thData tdL, sqlite3 *db) {
+
+void viewParkingHistory(thData tdL) {
     Response response;
     char query[200];
     snprintf(query, sizeof(query), "SELECT * FROM reservations WHERE user_id=%d;", tdL.userId);
 
+    sqlite3 *db = open_database_connection();
     sqlite3_stmt *stmt;
     int rc;
 
@@ -642,6 +701,7 @@ void viewParkingHistory(thData tdL, sqlite3 *db) {
 
     char allReservations[MAX_MESSAGE_LENGTH];
     bzero(allReservations, MAX_MESSAGE_LENGTH);
+    strcat(allReservations, "Your parking history is: \n");
 
     int foundReservations = 0;
 
@@ -655,7 +715,6 @@ void viewParkingHistory(thData tdL, sqlite3 *db) {
         const char *reservationDate = (const char *)sqlite3_column_text(stmt, 4);
 
         char reservationInfo[MAX_MESSAGE_LENGTH];
-        strcat(allReservations, "Your parking history is: \n");
         snprintf(reservationInfo, sizeof(reservationInfo), "Reservation from date: %s in city: %s and area: %s\n", reservationDate, cityName, areaName);
         strcat(allReservations, reservationInfo);
     }
@@ -667,13 +726,17 @@ void viewParkingHistory(thData tdL, sqlite3 *db) {
     if (!foundReservations) {
         snprintf(response.message, sizeof(response.message), "No reservations found!"); 
     }
+    else{
+        strcat(response.message, allReservations);
+        response.message[sizeof(response.message) - 1] = '\0';
+    }
 
-    strcat(response.message, allReservations);
-    response.message[sizeof(response.message) - 1] = '\0';
     printf("response.message = %s \n", response.message);
 
     response.success = 1;
     if (write(tdL.cl, &response, sizeof(Response)) <= 0) {
         perror("[Thread] Error writing reservations to client.\n");
     }
+
+    close_database_connection(db);
 }

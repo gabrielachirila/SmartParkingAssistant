@@ -15,6 +15,26 @@
 #include "response.h"
 #include "constants.h"
 
+sqlite3 *open_database_connection() {
+  sqlite3 *db;
+  int rc;
+
+  rc = sqlite3_open("proiect-RC.db", &db);
+
+  if (rc) {
+    fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db));
+    exit(1);
+  } else {
+    fprintf(stderr, "Opened database successfully\n");
+  }
+
+  return db;
+}
+
+void close_database_connection(sqlite3 *db) {
+  sqlite3_close(db);
+}
+
 void createTables(sqlite3 *db) {
     char *error_message = 0;
 
@@ -44,9 +64,7 @@ void createTables(sqlite3 *db) {
                                          "    city_name TEXT,"
                                          "    area_name TEXT,"
                                          "    reservation_date TEXT,"
-                                         "    FOREIGN KEY (user_id) REFERENCES users(id),"
-                                         "    FOREIGN KEY (city_name) REFERENCES cities(city_name),"
-                                         "    FOREIGN KEY (area_name) REFERENCES areas(area_name)"
+                                         "    FOREIGN KEY (user_id) REFERENCES users(id)"
                                          ");";
     if (sqlite3_exec(db, createReservationsTableQuery, 0, 0, &error_message) != SQLITE_OK) {
         fprintf(stderr, "SQL error: %s \n", error_message);

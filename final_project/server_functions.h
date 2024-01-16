@@ -19,11 +19,11 @@
 #include "thread_data.h"
 
 
-void register_user(thData tdL, sqlite3 *db);
-int login_user(thData *tdL, sqlite3 *db);
-int verify_username(char username[30],  sqlite3 *db);
-void viewParkingAvailability(thData tdL, sqlite3 *db);
-int bookParkingSpace(thData tdL, sqlite3 *db, char areaName[MAX_AREA_LENGTH], char cityName[MAX_CITY_LENGTH]);
-void viewParkingHistory(thData tdL, sqlite3 *db);
+void register_user(thData tdL);
+int login_user(thData *tdL);
+int verify_username(char username[MAX_USERNAME_LENGTH],  sqlite3 *db);
+void viewParkingAvailability(thData tdL);
+int bookParkingSpace(thData tdL, char areaName[MAX_AREA_LENGTH], char cityName[MAX_CITY_LENGTH]);
+void viewParkingHistory(thData tdL);
 
 #endif
